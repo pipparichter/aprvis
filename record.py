@@ -6,20 +6,65 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import re
 import scipy.stats
+import pandas as pd
+import os
+
+import seaborn as sns
+
+def arr2str(arr, delim=''): return ''.join(list(arr))
+
+def is_similar(s, ref, a='ACTG'):
+    '''
+    Returns True if one change (insertion, deletion, or substitution) results in
+    s being equal to the reference. False otherwise. 
+
+    Params
+    ------
+    s : str
+    ref : str
+        String against which to compare s. 
+    a : str
+        The alphabet from which to draw possible substitutions. 
+    '''
+    s = np.array(list(s))
+    ref = np.array(list(ref))
+    l = len(ref)
+
+    for i in range(len(s)):
+        # Deletion
+        if np.all(np.delete(s, i) == ref):
+            return True
+        val = s[i] # Store the original value. 
+        for c in a:
+            # Insertion
+            if np.all(np.insert(s, i, [c])[:l] == ref):
+                return True
+            # Substitution
+            s[i] = c
+            if np.all(s[:l] == ref):
+                return True
+            s[i] = val # Restore original value. 
+    return False
 
 # TODO: Maybe allow some degree of error when checking for the palindromic
 # sequence.
 
+def get_umi2prot(records):
+    '''
+    Returns a dictionary mapping each molecule (by UMI) to its corresponding
+    protein. 
+    '''
+    umi2prot = {}
+    for r in records:
+        umi2prot[r.umi1] = r.prot1
+        umi2prot[r.umi2] = r.prot2
+    return umi2prot
+
 # The protein represented by each marker.
-# NOTE: This map doesn't seem to be working?
 marker2protein = {'CGATGT':'b-catenin', 'TGACCA':'Smad4', 'ACATCG':'pSmad2',
         'GGCTAC':'E-cadherin', 'CTTGTA':'Smad2/3'}
+proteins =  ['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3']
 
-# H, D : Single-molecule UMI
-# X : Marker barcode
-# N : Primer UMI
-# GGCGCCA : Palindrome
-key = np.array(list('HHHHHHHHHHHHHHHHHHHHHHHHHXXXXXXTGGCGCCAYYYYYYDDDDDDDDDDDDDDDDDDDDDDDDDACTATAGTGAGTCGTATTANNNNNNNN'))
 # Specific regions on primer design. 
 s = 'CTATAGTGAGTCGTATTA'
 t = 'TGGCGCCA' # Palindromic sequence. 
@@ -38,44 +83,62 @@ def find_palindrome(seq, t=t):
     raise Exception(f'Palindromic sequence {t} not found.')
     # return None 
 
-def arr2str(arr, delim=''): return ''.join(list(arr))
 
 class Record:
-    def __init__(self, label, seq, q):
+    def __init__(self,
+            # Are the R1 and R2 labels the same?
+            # label=None
+            r1_seq=None, 
+            r2_seq=None,
+            r1_q=None,
+            r2_q=None):
         '''
-        Initializes a record object. 
+        Initializes a record object. It is initiated using reads from either end
+        of the record (antiparallel). 
         
         Params
         ------
-        label : str
-            Label of the record per the FASTQ convention. 
-        seq : str
-            The DNA record sequence. 
-        q : str
-            The ASCII-encoded quality score. 
+        r1_seq : str
+            The DNA record sequence read in from the R1 file.
+        r2_seq : str
+            The DNA record sequence read in from the R2 file. 
+        r1_q : str
+            The ASCII-encoded quality score read in from the R1 file. 
+        r2_q : str
+            The ASCII-encoded quality score read in from the R2 file. 
         '''
-        self.label = label[:-2]
-        self.seq = seq[:-2] # Trim the newline character.
-        self.q = q[:-2]
-
-        seq_arr = np.array(list(seq)) # Represent sequence as a Numpy array. 
+        # Make sure all necessary argument are given to create a Record object
+        # from two separate reads. 
+        try:
+            self.r1_seq = r1_seq[:-2] # Trim the newline character.
+            self.r1_q = r1_q[:-2]
+            self.r2_seq = r2_seq[:-2] # Trim the newline character.
+            self.r2_q = r2_q[:-2]
+        except TypeError: # Raised if one of the parameters is None.
+            raise ValueError('Insufficient arguments were given.')
         
+        self.r1_seq = r1_seq
+        self.r2_seq = r2_seq
+
+        r1_seq_arr = np.array(list(r1_seq)) # Represent sequence as a Numpy array. 
+        r2_seq_arr = np.array(list(r2_seq)) # Represent sequence as a Numpy array. 
+            
         # Instead of using the key, try finding the palindromic sequence and
         # looking to the left and right of it. 
-        t0 = find_palindrome(seq, t=t)
-        self.marker1 = arr2str(seq_arr[t0 - 6:t0])
-        self.marker2 = arr2str(seq_arr[t0 + len(t):t0 + len(t) + 6])
+        r1_t0 = find_palindrome(r1_seq, t=t)
+        r2_t0 = find_palindrome(r2_seq, t=t)
+
+        self.marker1 = arr2str(r1_seq_arr[r1_t0 - 6:r1_t0])
+        self.marker2 = arr2str(r2_seq_arr[r2_t0 - 6:r2_t0])
+        
         try:
             self.prot1 = marker2protein[self.marker1]
             self.prot2 = marker2protein[self.marker2]
         except KeyError: # Not in the dictionary!
             raise Exception('Unable to detect valid protein marker.')
-
-        self.umi1 = arr2str(seq_arr[np.where(key == 'H')])
-        self.umi2 = arr2str(seq_arr[np.where(key == 'D')])
-        self.primer_umi = arr2str(seq_arr[np.where(key == 'N')])
-
-        self.seq_arr = seq_arr
+        
+        self.umi1 = arr2str(r1_seq_arr[:25])
+        self.umi2 = arr2str(r2_seq_arr[:25])
 
     def __str__(self): 
         '''
@@ -83,7 +146,7 @@ class Record:
         '''
         return f' LABEL: {self.label}\nSEQ: {self.seq}'
 
-def records2matrix(records, mode='prot'):
+def get_adjacency_matrix(records, allow_err=True):
     '''
     Convert a list of records to an adjacency matrix of interactions.
 
@@ -94,72 +157,279 @@ def records2matrix(records, mode='prot'):
     mode : str
         One of 'prot' and 'umi'. Dictates whether a matrix for single
         molecule interactions or overall protein interactions is created. 
+    allow_err : bool
+        Whether or not to allow some error between UMIs. 
     '''
-    assert mode in ['prot', 'umi']
-    index = np.unique([getattr(r, f'{mode}1') for r in records] + [getattr(r,
-        f'{mode}2') for r in records])
-
-    matrix = np.zeros((len(index), len(index)))
+    # Get all the UMIs in some fixed order.
+    umis = np.unique([r.umi1 for r in records] + [r.umi2 for r in records])
+    # Initialize a DataFrame filled with zeros. 
+    df = pd.DataFrame(np.zeros((len(umis), len(umis))), columns=umis, index=umis)
     for r in records:
-        u, v = getattr(r, f'{mode}1'), getattr(r, f'{mode}2')
+        u, v = r.umi1, r.umi2
+        if allow_err:
+            if is_similar(u + r.r1_seq[25], v):
+                u = v
+            elif is_similar(v + r.r2_seq[25], u):
+                v = u
         # Get the indices with which to access the cells in the matrix. 
-        i1, i2 = np.where(index == u)[0], np.where(index == v)[0]
-        matrix[i1, i2] += 1
-        matrix[i2, i1] += 1
+        df.at[u, v] += 1
+        df.at[v, u] += 1
     
-    return index, matrix.astype(int)
+    # Remove any rows or columns with all zeros. 
+    df = df.loc[(df!=0).any(axis=1)]
+    df = df.loc[:, (df!=0).any(axis=0)]
+    return df
 
-def get_umi2prot(records):
-    '''
-    Returns a dictionary mapping each molecule (by UMI) to its corresponding
-    protein. 
-    '''
-    umi2prot = {}
-    for r in records:
-        umi2prot[r.umi1] = r.prot1
-        umi2prot[r.umi2] = r.prot2
-    return umi2prot
 
+def get_protein_interaction_data(a, u2p=None):
+    '''
+    Takes an adjacency matrix as input, and returns a new DataFrame containing
+    the number of interactions of each molecule with other molecules of each
+    protein type. 
+    
+    Params
+    ------
+    a : pd.DataFrame
+        An adjacency matrix, the output of the get_adjacency_matrix function. 
+    u2p : dict
+        A dictionary mapping each UMI to a protein. This is the output of the
+        get_u2prot function. 
+    '''
+    assert u2p is not None
+    
+    # Get the protein for each UMI, in order of its presence along the axis. 
+    prot_index = np.array([u2p[u] for u in a.index]) 
+
+    df = pd.DataFrame(np.zeros((len(a.index), len(proteins))), columns=proteins, index=a.index)
+    for p in proteins:
+        cols = a.index[prot_index == p]
+        df[p] = a.loc[cols].sum(axis=1)
+    return df.fillna(0.0)
+
+def filter_protein_interaction_data(df, n=3, save=None):
+    '''
+    Takes a list of records as input, and finds all instances where exactly n
+    molecules belonging two different proteins interact (i.e. exist together in
+    a record. Returns the information as a pandas DataFrame. 
+
+    Params
+    ------
+    df : pd.DataFrame
+        Should be the output of the get_protein_interaction_data function. 
+    '''
+    arr = df.values
+    # Get the indices of UMIs which have more than a specified number of
+    # interactions with unique proteins. 
+    f = lambda a : len(np.unique(df.columns[np.where(a > 0)])) == n
+    filter_idxs = np.apply_along_axis(f, 1, arr)
+    # Use the obtained indices to filter the dataframe.
+    df = df[filter_idxs]
+
+    if not (save is None):
+        df.to_csv(save)
+
+    return df
+ 
 
 # NOTE: Probably would want to add functionality to start at different locations
 # in the file. 
-def load_records(filename, num=10000):
+def load_records(r1_file, r2_file, num=10000):
     '''
-    Load in record data as Record objects from the specified file. Returns a
+    Load in record data as Record objects from the specified files. Returns a
     list of Record objects. 
 
     Params
     ------
-    filename : str
-        Filepath to where the record data is stored. 
+    r1_file : str
+        The name of the file containing the first set of reads. 
+    r2_file : str
+        The name of the file containing the second set of reads. The reads in
+        this file correspond line-by-line to the reads in the r1_file, but they
+        are the reverse complements. 
     num : int, None
         Number of records to load from the file. If None, then try to load in
         all records. 
     '''
+
     records = []
     # File is too big, need to get the number of lines with a bash command. 
-    nlines = subprocess.check_output(['wc', '-l', filename]).decode('utf-8')
-    nlines = int(nlines.split()[0]) # Actual number is first thing returned. 
+    r1_nlines = subprocess.check_output(['wc', '-l', r1_file]).decode('utf-8')
+    r2_nlines = subprocess.check_output(['wc', '-l', r2_file]).decode('utf-8')
+    r1_nlines = int(r1_nlines.split()[0]) # Actual number is first thing returned. 
+    r2_nlines = int(r2_nlines.split()[0]) 
+    # Make sure files are the same size. 
+    if r1_nlines != r2_nlines:
+        raise ValueError('Input files must contain data for the same number of records.')
+    nlines = r1_nlines # Should be the same number of lines. 
+
     if num:
         num = min(num, int(nlines / 3)) # Don't try to grab more than maximum. 
     else:
         num = int(nlines / 3)
     
-    print(f'Loading {num} records from {filename}.')
-    with open(filename, 'r') as f:
-        for i in range(num):
-            l, s = f.readline(), f.readline()
-            f.readline() # This is just a + according to FASTQ format. 
-            q = f.readline()
-            try: # If loading the record fails, just give up. 
-                records.append(Record(l, s, q))
-            except:
-                pass
+    print(f'Loading {num} records.')
+    with open(r1_file, 'r') as f1:
+        with open(r2_file, 'r') as f2:
+            for i in range(num):
+                # Don't bother paying attention to the labels right now.
+                _, s1 = f1.readline(), f1.readline()
+                _, s2 = f2.readline(), f2.readline()
+                f1.readline() # This is just a + according to FASTQ format. 
+                f2.readline() # This is just a + according to FASTQ format. 
+                q1 = f1.readline()
+                q2 = f2.readline()
+                
+                try: # If loading the record fails, just give up. 
+                    records.append(Record(r1_q=q1, r2_q=q2, r1_seq=s1, r2_seq=s2))
+                except:
+                    pass
     print(f'{len(records)} records successfully loaded.')
     return records
 
 # Plotting functions
 # -------------------------------------------------------------------------------
+
+# def filter_umis(records, threshold=0):
+#     '''
+#     Returns a list of meaningful UMIs. 
+# 
+#     Params
+#     ------
+#     records : list
+#         A list of Record objects.
+#     threshold : int
+#         None by default. If specified, then grab all UMIs which participate in a
+#         number of interactions which exceeds the threshold. 
+#     '''
+#     index, matrix = records2matrix(records, mode='umi')
+#     index = np.array(index) # Make sure this is a numpy array. 
+#     # Gets the total number of interactions for each molecule. 
+#     totals = np.sum(matrix, axis=1)
+#     
+#     # First, just get the UMIs which meet the threshold. 
+#     filter_idxs = totals > threshold
+#     umis = index[filter_idxs]
+#     data = matrix[filter_idxs, :]
+#     
+#     if np.max(data) == 0:
+#         raise RuntimeWarning('There does not seem to be any detected interactions.')
+#     return umis, data
+# 
+
+def plot_protein_interaction_hist(df,
+        experiments=None,
+        target=None, 
+        figsize=(40, 40),
+        save=None):
+    '''
+    Creats a histogram using the given data.
+
+    Params
+    ------
+    df : pd.DataFrame or list of pd.DataFrame
+        DataFrame should the the output of get_protein_interaction_data. 
+    experiments : list
+        Optional. Should be a list of experiment labels for each specified
+        DataFrame. 
+    figsize : (int, int)
+        Figure size. 
+    target : str
+        A UMI, if you want to look at the data for a single molecule. 
+    save : str, None
+        None by default. If specified, used as the filename or path under which
+        to save the plot.
+    '''
+    if type(df) == list: # In this case, records is a list of lists. 
+        dfs = df
+    else:
+        dfs = [df]
+    if experiments is None:
+        experiments = np.arange(len(dfs))
+
+    new_dfs = []
+    # Build new datasets to accumulate total interactions. 
+    for i, df in enumerate(dfs):
+        if target: # If a target UMI is specified, only plot relevant data
+            df = df.iloc[target]
+
+        new_df = {}
+        new_df['proteins'] = df.columns
+        new_df['occurrences'] = df.values.sum(axis=0)
+        new_df['exp'] = experiments[i]
+        new_dfs.append(pd.DataFrame(new_df))
+
+    df = pd.concat(new_dfs)
+    sns.barplot(data=df, x='proteins', y='occurrences', hue='exp')
+ 
+    if not (save is None):
+        plt.savefig(save)
+    
+    plt.show()
+
+def bin_by_count(df):
+    '''
+    For use in the plot_count_hist function. 
+    '''
+    new_df = {'counts':[], 'occurrences':[]}
+    all_counts = df.values.sum(axis=1)
+    for x in range(int(np.max(all_counts)) + 1):
+        new_df['counts'].append(x)
+        new_df['occurrences'].append(np.count_nonzero(all_counts == x))
+    if len(new_df) == 0:
+        raise RuntimeError('No interactions detected in given dataset.')
+    return pd.DataFrame(new_df)
+
+# Might be worth breaking this plotting code into two steps (a binning step
+# prior to the plotting). 
+def plot_count_hist(df,
+        experiments=None,
+        target=None, 
+        figsize=(40, 40),
+        save=None):
+    '''
+    Creats a histogram using the given data.
+
+    Params
+    ------
+    df : pd.DataFrame or list of pd.DataFrame
+        DataFrame should the the output of get_adjaceny_matrix 
+    experiments : list
+        Optional. Should be a list of experiment labels for each specified
+        DataFrame. 
+    figsize : (int, int)
+        Figure size. 
+    target : str
+        A UMI, if you want to look at the data for a single molecule. 
+    save : str, None
+        None by default. If specified, used as the filename or path under which
+        to save the plot.
+    '''
+    if type(df) == list: # In this case, records is a list of lists. 
+        dfs = df
+    else:
+        dfs = [df]
+    if experiments is None:
+        experiments = np.arnge(len(dfs))
+    
+    new_dfs = []
+    # Need to combine the two datasets. Make sure to label each sample. 
+    for i, df in enumerate(dfs):
+        if target: # If a target UMI is specified, only plot relevant data
+            df = df.iloc[df.index.str.fullmatch(target)]
+            if len(df) == 0:
+                raise RuntimeError('Target UMI not found.')
+        new_df = bin_by_count(df)
+        new_df['exp'] = experiments[i]
+        new_dfs.append(new_df)
+
+    df = pd.concat(new_dfs) # .groupby('counts').sum()
+    sns.barplot(data=df, x='counts', y='occurrences', hue='exp')
+    
+    if save is not None:
+        plt.savefig(save)
+    
+    plt.show()
+
 
 def get_random_color():
     '''
@@ -180,129 +450,17 @@ def get_random_pos(r, c, a, spread=5):
     # Random angle for the new point from the subgroup center. 
     a1 = np.random.uniform(low=0, high=2*np.pi)
     x, y = cx1 + np.cos(a1)*r1, cy1 + np.sin(a1)*r1
-    
-    return (x, y)
+    try: # What the fuck
+        return (x[0], y[0])
+    except:
+        return (x, y)
 
-def filter_umis(records, 
-        num=None, 
-        threshold=None, 
-        unique_proteins=None):
-    '''
-    Returns a list of meaningful UMIs. 
-
-    Params
-    ------
-    records : lst
-        A list of Record objects.
-    num : int
-        None by default. If specified, then grab the top n UMIs which
-        participate in the most interactions. 
-    count : float
-        None by default. If specified, grabs a list of all UMIs with a total
-        number of interactions which exceeds the threshold. 
-    unique_proteins : int
-        None by default. Allows you to filter for UMIs which participate in
-        interactions with a specified number of different proteins (i.e. 
-        not the same protein twice) are included in the threshold count. 
-    '''
-    if np.count_nonzero([threshold, unique_proteins, num]) > 1: 
-        raise RuntimeWarning('More than one filter method was specified.')
-    if not (threshold or unique_proteins or num):
-        raise ValueError('At least one filter method needs to be specified.')
-
-    index, matrix = records2matrix(records, mode='umi')
-    index = np.array(index) # Make sure this is a numpy array. 
-    # Gets the total number of interactions for each molecule. 
-    totals = np.sum(matrix, axis=1)
-    
-    if unique_proteins: # If not None...
-        u2p = get_umi2prot(records)
-        p = np.array([u2p[u] for u in index])
-        f = lambda a : len(np.unique(p[np.where(a > 0)])) >= unique_proteins
-        # Get the indices of UMIs which have more than a specified number of
-        # interactions with unique proteins. 
-        filter_idxs = np.apply_along_axis(f, 1, matrix)
-    elif threshold:
-        # First, just get the UMIs which meet the threshold. 
-        filter_idxs = totals > threshold
-    else: # Argsort sorts in ascending order. 
-        filter_idxs = np.argsort(totals)[-num:] 
-    
-    umis = index[filter_idxs]
-    data = matrix[filter_idxs, :]
-    
-    if np.max(data) == 0:
-        raise RuntimeWarning('There does not seem to be any detected interactions.')
-    return umis, data
-
-# TODO: We want to find the UMIs for the molecules which interact with at least
-# two other molecules belonging to a different protein group. 
-
-def plot_hist(records, 
-        target=None, 
-        figsize=(40, 40), 
-        mode=None, 
-        normalize=True, 
-        errorbars=True):
-    '''
-    Creats a histogram using the record data, which is basically just a
-    histogram of the edges of the interaction plot. 
-
-    Params
-    ------
-    target : str, None
-        If target is None, then no filtering is done; basically just make a
-        histogram of edges in the graph. 
-    records : lst
-        A list of record objects.
-    figsize : (float, float)
-        Figure size. 
-    mode : str, None
-        Indicates the type of the target, either a UMI or a protein. Must be
-        specified if a target is specified. 
-    normalize : bool
-        Whether or not to normalize counts (i.e. make it a real probability
-        distribution). 
-    '''
-    umi2prot = get_umi2prot(records)
-    umis, matrix = records2matrix(records, mode='umi')
-
-    if target:
-        assert mode in ['prot', 'umi']
-        if mode == 'prot':    
-            index = np.array([umi2prot[umi] for umi in umis])
-        elif mode == 'umi':
-            index = umis
-        matrix = matrix[np.where(index == target)[0], :]
-        matrix = matrix[:, np.where(index != target)[0]]
-    
-    data = np.sum(matrix, axis=1).astype(int) # Sum up all interactions. 
-    xvals = np.arange(0, np.max(data) + 1)
-    counts = np.array([np.count_nonzero(data == x) for x in xvals])
-    
-    if normalize: # Make sure to normalize the error. 
-        counts = counts / np.max(counts)
-    
-    plt.figure(figsize=figsize)
-    plt.bar(xvals, counts)
-    plt.xticks(ticks=xvals, labels=xvals.astype(str))
-    
-    if not target:
-        plt.title('Interaction distribution')
-    else:
-        if mode == 'prot': # Target is a protein. 
-            plt.title(f'Interaction distribution for {target} protein')
-        else: # Target is a UMI. 
-            plt.title(f'Interaction distribution for molecule {target}')
-    plt.show()
-    
 
 # Turns out I need to plot it manually because networkx plotting utilities suck
 # ass. 
 # TODO: Add some kind of filter with the UMI mode so that we are only plotting
 # interactions of molecules which are meaningful. 
-def plot_interactions(records,
-        mode='prot',
+def plot_interaction_network(df, u2p=None,
         labels=True,
         figsize=(50, 50), 
         spread=5, 
@@ -317,23 +475,27 @@ def plot_interactions(records,
 
     Params
     ------
-    records : lst
-        A list of Record objects. 
+    df : pd.DataFrame
+        The output of get_adjacency_matrix.
+    u2p : dict
+        A dictionary mapping each UMI to a protein. 
     mode : str
         One of 'prot' or 'umi'. Types of interactions to visualize.
-    labels : bool
-        Whether or not to include group labels.
     figsize : (float, float)
         Figure size. 
     spread : float
         The amount of spacing between points in the same cluster group. 
     '''
+    if u2p is None:
+        raise ValueError('UMI-to-protein dictionary must be specified.')
 
-    index, matrix = records2matrix(records, mode=mode)
-    n = len(index)
+    umis = list(df.index)
+    proteins = np.array(['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3'])
+    n = len(proteins)
+
     # Generate a random color for each group. 
-    if not colors:
-        colors = [get_random_color() for i in range(n)]
+    if colors is None:
+        colors = np.array([get_random_color() for p in proteins])
 
     # Divide the circle into sectors according to the number of groups. 
     G = nx.Graph()
@@ -341,18 +503,17 @@ def plot_interactions(records,
     
     pos, colors_by_node = [], []
     count = 0
-    for u, v in [(u, v) for u in range(n) for v in range(n)]:
-        for i in range(matrix[u, v]):
-            
-            # Add each node with their custom positions. 
-            pos.append(get_random_pos(r, c, angles[u], spread=spread))
-            colors_by_node.append(colors[u])
-            G.add_node(count, label=index[u])
+    for u, v in [(u, v) for u in umis for v in umis]:
+        # Add each node with their custom positions.
+        if df.at[u, v] > 0: # If there is an interaction. 
+            pos.append(get_random_pos(r, c, angles[proteins == u2p[u]], spread=spread))
+            colors_by_node.append(colors[proteins == u2p[u]][0])
+            G.add_node(count)
 
-            pos.append(get_random_pos(r, c, angles[v], spread=spread))
-            G.add_node(count + 1, label=index[v])
-            colors_by_node.append(colors[v])
-            
+            pos.append(get_random_pos(r, c, angles[proteins == u2p[v]], spread=spread))
+            G.add_node(count + 1)
+            colors_by_node.append(colors[proteins == u2p[v]][0])
+        
             G.add_edge(count, count + 1) # Add an edge for the record. 
             count += 2 # Update the count. 
     
@@ -364,11 +525,9 @@ def plot_interactions(records,
             width=kwargs.get('width', 0.5))
     
     label_dist = 5 # Distance of label from cluster.
-    if labels:
-        # Add labels to the groups on the graph. 
-        for i in range(n):
-            label_pos = get_random_pos(spread + r + label_dist, c, angles[i], spread=0)
-            plt.annotate(index[i], label_pos)
+    for i in range(n):
+        label_pos = get_random_pos(spread + r + label_dist, c, angles[i], spread=0)
+        plt.annotate(proteins[i], label_pos)
         
     plt.xlim([c[0] - (r + 2*spread + label_dist), c[0] + (r + 2*spread + label_dist)])
     plt.ylim([c[1] - (r + 2*spread + label_dist), c[1] + (r + 2*spread + label_dist)])
