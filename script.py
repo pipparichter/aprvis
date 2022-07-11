@@ -1,7 +1,7 @@
 from record import *
 
-e_records = load_records('./data/e_r1_data.fq', './data/e_r2_data.fq')
-m_records = load_records('./data/m_r1_data.fq', './data/m_r2_data.fq')
+e_records = load_records('./data/e_r1_data.fq', './data/e_r2_data.fq', num=None)
+m_records = load_records('./data/m_r1_data.fq', './data/m_r2_data.fq', num=None)
 
 
 # Build the dictionary mapping UMIs to proteins. 
