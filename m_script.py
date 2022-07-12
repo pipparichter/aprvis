@@ -14,7 +14,7 @@ m_pi = get_protein_interaction_data(m_a, u2p=m_u2p)
 
 # Filter and save protein interaction data. The `save` parameter, if specified, writes the resulting matrix
 # to a CSV file.
-m_pi_filtered = filter_protein_interaction_data(m_pi, n=1, save='./m_pi_data.csv')
+m_pi_filtered = filter_protein_interaction_data(m_pi, n=3, save='./m_pi_data.csv')
 
 
 plot_count_hist(m_a, experiments=['M'], save='m_plot.png')

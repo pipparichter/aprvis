@@ -14,7 +14,7 @@ e_pi = get_protein_interaction_data(e_a, u2p=e_u2p)
 
 # Filter and save protein interaction data. The `save` parameter, if specified, writes the resulting matrix
 # to a CSV file. 
-e_pi_filtered = filter_protein_interaction_data(e_pi, n=1, save='./e_pi_data.csv')
+e_pi_filtered = filter_protein_interaction_data(e_pi, n=3, u2p=e_u2p, save='./e_pi_data.csv')
 
 plot_count_hist(e_a, experiments=['E'], save='e_plot.png')
 # One mor more adjacency matrices can be given as input.

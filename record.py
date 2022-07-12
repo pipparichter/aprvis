@@ -13,38 +13,38 @@ import seaborn as sns
 
 def arr2str(arr, delim=''): return ''.join(list(arr))
 
-def is_similar(s, ref, a='ACTG'):
-    '''
-    Returns True if one change (insertion, deletion, or substitution) results in
-    s being equal to the reference. False otherwise. 
-
-    Params
-    ------
-    s : str
-    ref : str
-        String against which to compare s. 
-    a : str
-        The alphabet from which to draw possible substitutions. 
-    '''
-    s = np.array(list(s))
-    ref = np.array(list(ref))
-    l = len(ref)
-
-    for i in range(len(s)):
-        # Deletion
-        if np.all(np.delete(s, i) == ref):
-            return True
-        val = s[i] # Store the original value. 
-        for c in a:
-            # Insertion
-            if np.all(np.insert(s, i, [c])[:l] == ref):
-                return True
-            # Substitution
-            s[i] = c
-            if np.all(s[:l] == ref):
-                return True
-            s[i] = val # Restore original value. 
-    return False
+# def is_similar(s, ref, a='ACTG'):
+#     '''
+#     Returns True if one change (insertion, deletion, or substitution) results in
+#     s being equal to the reference. False otherwise. 
+# 
+#     Params
+#     ------
+#     s : str
+#     ref : str
+#         String against which to compare s. 
+#     a : str
+#         The alphabet from which to draw possible substitutions. 
+#     '''
+#     s = np.array(list(s))
+#     ref = np.array(list(ref))
+#     l = len(ref)
+# 
+#     for i in range(len(s)):
+#         # Deletion
+#         if np.all(np.delete(s, i) == ref):
+#             return True
+#         val = s[i] # Store the original value. 
+#         for c in a:
+#             # Insertion
+#             if np.all(np.insert(s, i, [c])[:l] == ref):
+#                 return True
+#             # Substitution
+#             s[i] = c
+#             if np.all(s[:l] == ref):
+#                 return True
+#             s[i] = val # Restore original value. 
+#     return False
 
 # TODO: Maybe allow some degree of error when checking for the palindromic
 # sequence.
@@ -146,7 +146,7 @@ class Record:
         '''
         return f' LABEL: {self.label}\nSEQ: {self.seq}'
 
-def get_adjacency_matrix(records, allow_err=True):
+def get_adjacency_matrix(records): #, allow_err=True):
     '''
     Convert a list of records to an adjacency matrix of interactions.
 
@@ -166,11 +166,11 @@ def get_adjacency_matrix(records, allow_err=True):
     df = pd.DataFrame(np.zeros((len(umis), len(umis))), columns=umis, index=umis)
     for r in records:
         u, v = r.umi1, r.umi2
-        if allow_err:
-            if is_similar(u + r.r1_seq[25], v):
-                u = v
-            elif is_similar(v + r.r2_seq[25], u):
-                v = u
+#         if allow_err:
+#             if is_similar(u + r.r1_seq[25], v):
+#                 u = v
+#             elif is_similar(v + r.r2_seq[25], u):
+#                 v = u
         # Get the indices with which to access the cells in the matrix. 
         df.at[u, v] += 1
         df.at[v, u] += 1
@@ -197,16 +197,23 @@ def get_protein_interaction_data(a, u2p=None):
     '''
     assert u2p is not None
     
-    # Get the protein for each UMI, in order of its presence along the axis. 
-    prot_index = np.array([u2p[u] for u in a.index]) 
+    df = pd.DataFrame(columns=['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3'])
+    for umi in a.columns:
+        # Get a list of the adjacent molecules.
+        umis = a.index[np.where(a[umi].values > 0)]
+        umis = np.append(umis, umi) # Add the current UMI. 
+        # Get a list of all unique interacting proteins. 
+        prots = np.unique([u2p[u] for u in umis])
+        # NOTE: There is an issue with this method... it does not record the
+        # UMIs or measure the quantity of the interactions. 
+        new_row = {p:0 for p in ['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3']}
+        for p in prots:
+            new_row[p] = 1
+        df = df.append(new_row, ignore_index=True)
+    
+    return df
 
-    df = pd.DataFrame(np.zeros((len(a.index), len(proteins))), columns=proteins, index=a.index)
-    for p in proteins:
-        cols = a.index[prot_index == p]
-        df[p] = a.loc[cols].sum(axis=1)
-    return df.fillna(0.0)
-
-def filter_protein_interaction_data(df, n=3, save=None):
+def filter_protein_interaction_data(df, u2p=None, n=3, save=None):
     '''
     Takes a list of records as input, and finds all instances where exactly n
     molecules belonging two different proteins interact (i.e. exist together in
@@ -217,14 +224,13 @@ def filter_protein_interaction_data(df, n=3, save=None):
     df : pd.DataFrame
         Should be the output of the get_protein_interaction_data function. 
     '''
-    arr = df.values
-    # Get the indices of UMIs which have more than a specified number of
-    # interactions with unique proteins. 
-    f = lambda a : len(np.unique(df.columns[np.where(a > 0)])) == n
-    filter_idxs = np.apply_along_axis(f, 1, arr)
-    # Use the obtained indices to filter the dataframe.
-    df = df[filter_idxs]
+    assert u2p is not None
 
+    protein_counts = df.values.sum(axis=1)
+    # Use the obtained indices to filter the dataframe.
+    df = df.iloc[np.where(protein_counts == n)]
+        
+    # Need to slightly modify the format of the data output. 
     if not (save is None):
         df.to_csv(save)
 
