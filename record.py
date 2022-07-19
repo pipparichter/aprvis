@@ -60,9 +60,13 @@ def get_umi2prot(records):
         umi2prot[r.umi2] = r.prot2
     return umi2prot
 
+marker2protein = {
+        'GGCTAC':'b-catenin', 
+        'ACAGTG':'Smad4',
+        'CTTGTA':'pSmad2',
+        'CGATGT':'E cadherin',
+        'TGACCA':'Smad23'}
 # The protein represented by each marker.
-marker2protein = {'CGATGT':'b-catenin', 'TGACCA':'Smad4', 'ACATCG':'pSmad2',
-        'GGCTAC':'E-cadherin', 'CTTGTA':'Smad2/3'}
 proteins =  ['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3']
 
 # Specific regions on primer design. 
@@ -150,6 +154,7 @@ def get_adjacency_matrix(records): #, allow_err=True):
     '''
     Convert a list of records to an adjacency matrix of interactions.
 
+237     return df
     Params
     ------
     records : lst
