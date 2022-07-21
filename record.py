@@ -64,8 +64,8 @@ marker2protein = {
         'GGCTAC':'b-catenin', 
         'ACAGTG':'Smad4',
         'CTTGTA':'pSmad2',
-        'CGATGT':'E cadherin',
-        'TGACCA':'Smad23'}
+        'CGATGT':'E-cadherin',
+        'TGACCA':'Smad2/3'}
 # The protein represented by each marker.
 proteins =  ['b-catenin', 'Smad4', 'pSmad2', 'E-cadherin', 'Smad2/3']
 
